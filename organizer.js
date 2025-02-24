@@ -1,7 +1,64 @@
 import _ from 'lodash';
 
+class CategoryManager {
+    constructor(configFile) {
+        this.categories = new Map();
+        this.keywords = new Map();
+        this.configFile = configFile;
+    }
+
+    async loadConfig() {
+        try {
+            const content = await window.fs.readFile(this.configFile, { encoding: 'utf8' });
+            const config = JSON.parse(content);
+            
+            config.categories.forEach(category => {
+                this.categories.set(category.name, {
+                    description: category.description,
+                    tags: category.tags || [],
+                    keywords: category.keywords || []
+                });
+                
+                // Index keywords for automatic categorization
+                (category.keywords || []).forEach(keyword => {
+                    if (!this.keywords.has(keyword)) {
+                        this.keywords.set(keyword, []);
+                    }
+                    this.keywords.get(keyword).push(category.name);
+                });
+            });
+        } catch (error) {
+            console.error('Error loading category config:', error);
+            throw new Error('Failed to load category configuration');
+        }
+    }
+
+    suggestCategory(url, title) {
+        // Check URL and title against keywords
+        const wordsToCheck = [...url.toLowerCase().split(/[/-]/).filter(Boolean),
+                             ...title.toLowerCase().split(/\s+/)];
+        
+        const matchedCategories = new Map();
+        
+        wordsToCheck.forEach(word => {
+            this.keywords.forEach((categories, keyword) => {
+                if (word.includes(keyword.toLowerCase())) {
+                    categories.forEach(category => {
+                        matchedCategories.set(category, (matchedCategories.get(category) || 0) + 1);
+                    });
+                }
+            });
+        });
+        
+        // Return category with most matches, or null if none found
+        return Array.from(matchedCategories.entries())
+            .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    }
+}
+
 class URLOrganizer {
-    constructor() {
+    constructor(categoryManager) {
+        this.categoryManager = categoryManager;
         this.categories = new Map();
         this.invalidLinks = [];
         this.authLinks = [];
@@ -12,6 +69,30 @@ class URLOrganizer {
             duplicates: 0,
             auth: 0
         };
+    }
+
+    async fetchPageTitle(url) {
+        try {
+            const response = await fetch(url);
+            const html = await response.text();
+            const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+            return titleMatch ? titleMatch[1].trim() : '';
+        } catch (error) {
+            console.error('Error fetching page title:', error);
+            return '';
+        }
+    }
+
+    async addNewURL(url, category = null) {
+        const title = await this.fetchPageTitle(url);
+        const suggestedCategory = category || this.categoryManager.suggestCategory(url, title);
+        
+        if (!suggestedCategory) {
+            throw new Error('Could not determine appropriate category for URL');
+        }
+        
+        this.addURL(suggestedCategory, url, title);
+        return { category: suggestedCategory, title };
     }
 
     async readFile(filename) {
@@ -193,6 +274,84 @@ class URLOrganizer {
         await this.validateAllURLs();
         return this.generateMarkdown();
     }
+
+    async handleInvalidLink(url, alternateUrl) {
+        // Remove from invalid links if it exists
+        this.invalidLinks = this.invalidLinks.filter(link => link.url !== url);
+        
+        if (alternateUrl) {
+            // Validate the alternate URL
+            const validation = await this.validateURL(alternateUrl);
+            if (validation.valid) {
+                const title = await this.fetchPageTitle(alternateUrl);
+                const category = this.categoryManager.suggestCategory(alternateUrl, title);
+                if (category) {
+                    this.addURL(category, alternateUrl, title);
+                    this.stats.invalid--;
+                    return { success: true, message: `Added alternate URL to category: ${category}` };
+                }
+            }
+            return { success: false, message: 'Alternate URL is also invalid' };
+        }
+        return { success: false, message: 'No alternate URL provided' };
+    }
 }
 
-export default URLOrganizer;
+class CLIHandler {
+    constructor() {
+        this.organizer = null;
+        this.categoryManager = null;
+    }
+
+    async initialize(configFile) {
+        this.categoryManager = new CategoryManager(configFile);
+        await this.categoryManager.loadConfig();
+        this.organizer = new URLOrganizer(this.categoryManager);
+    }
+
+    async handleCommand(command, args) {
+        switch (command) {
+            case 'process':
+                if (!args.input) {
+                    throw new Error('Input file required');
+                }
+                const markdown = await this.organizer.processFile(args.input);
+                await this.saveOutput(markdown, args.output || 'organized-urls.md');
+                return 'File processed successfully';
+
+            case 'add':
+                if (!args.url) {
+                    throw new Error('URL required');
+                }
+                const result = await this.organizer.addNewURL(args.url, args.category);
+                const markdown2 = this.organizer.generateMarkdown();
+                await this.saveOutput(markdown2, args.output || 'organized-urls.md');
+                return `Added URL to category: ${result.category}`;
+
+            case 'fix-invalid':
+                if (!args.url) {
+                    throw new Error('Original URL required');
+                }
+                const fixResult = await this.organizer.handleInvalidLink(args.url, args.alternate);
+                if (fixResult.success) {
+                    const markdown3 = this.organizer.generateMarkdown();
+                    await this.saveOutput(markdown3, args.output || 'organized-urls.md');
+                }
+                return fixResult.message;
+
+            default:
+                throw new Error('Unknown command');
+        }
+    }
+
+    async saveOutput(content, filename) {
+        try {
+            await window.fs.writeFile(filename, content, { encoding: 'utf8' });
+        } catch (error) {
+            console.error('Error saving file:', error);
+            throw new Error('Failed to save output file');
+        }
+    }
+}
+
+export { URLOrganizer, CategoryManager, CLIHandler };

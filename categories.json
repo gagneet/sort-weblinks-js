@@ -1,0 +1,22 @@
+{
+    "categories": [
+        {
+            "name": "DevOps",
+            "description": "DevOps tools and resources",
+            "tags": ["devops", "automation", "ci-cd"],
+            "keywords": ["jenkins", "docker", "kubernetes", "pipeline", "automation", "deploy"]
+        },
+        {
+            "name": "Sightseeing",
+            "description": "Travel and sightseeing destinations",
+            "tags": ["travel", "tourism"],
+            "keywords": ["tour", "travel", "visit", "destination", "attraction"]
+        },
+        {
+            "name": "Home Search",
+            "description": "Real estate and home search resources",
+            "tags": ["real-estate", "housing"],
+            "keywords": ["home", "house", "apartment", "real-estate", "property"]
+        }
+    ]
+}

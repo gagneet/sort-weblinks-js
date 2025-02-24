@@ -1,4 +1,8 @@
 import _ from 'lodash';
+import fs from 'fs/promises'; // Use Node.js fs module
+import fetch from 'node-fetch'; // For Node.js fetch
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
 
 class CategoryManager {
     constructor(configFile) {
@@ -9,7 +13,7 @@ class CategoryManager {
 
     async loadConfig() {
         try {
-            const content = await window.fs.readFile(this.configFile, { encoding: 'utf8' });
+            const content = await fs.readFile(this.configFile, { encoding: 'utf8' });
             const config = JSON.parse(content);
             
             config.categories.forEach(category => {
@@ -97,7 +101,7 @@ class URLOrganizer {
 
     async readFile(filename) {
         try {
-            const content = await window.fs.readFile(filename, { encoding: 'utf8' });
+            const content = await fs.readFile(filename, { encoding: 'utf8' });
             return this.parseContent(content);
         } catch (error) {
             console.error('Error reading file:', error);
@@ -346,7 +350,7 @@ class CLIHandler {
 
     async saveOutput(content, filename) {
         try {
-            await window.fs.writeFile(filename, content, { encoding: 'utf8' });
+            await fs.writeFile(filename, content, { encoding: 'utf8' });
         } catch (error) {
             console.error('Error saving file:', error);
             throw new Error('Failed to save output file');
@@ -354,4 +358,35 @@ class CLIHandler {
     }
 }
 
-export { URLOrganizer, CategoryManager, CLIHandler };
+async function main() {
+    const argv = yargs(hideBin(process.argv))
+        .command('process', 'Process a URL list', {
+            config: { describe: 'Category config file', demandOption: true, type: 'string' },
+            input: { describe: 'Input URL file', demandOption: true, type: 'string' },
+            output: { describe: 'Output markdown file', type: 'string' },
+        })
+        .command('add', 'add a url', {
+            url: {describe: "url to add", demandOption: true, type: "string"},
+            category: {describe: "category of the url", type: "string"},
+            output: {describe: "output markdown file", type: "string"}
+        })
+        .command('fix-invalid', 'fix an invalid url', {
+            url: {describe: "url to fix", demandOption: true, type: "string"},
+            alternate: {describe: "alternate url", type: "string"},
+            output: {describe: "output file", type: "string"}
+        })
+        .demandCommand(1, 'You need to specify a command')
+        .parse();
+
+    const handler = new CLIHandler();
+    await handler.initialize(argv.config);
+
+    try {
+        const message = await handler.handleCommand(argv._[0], argv);
+        console.log(message);
+    } catch (error) {
+        console.error('Error:', error.message);
+    }
+}
+
+main();
